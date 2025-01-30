@@ -6,3 +6,4 @@ krypton.db
 config.yml
 package-lock.json
 dist/
+.env

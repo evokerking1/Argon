@@ -5,3 +5,4 @@ database.sqlite
 krypton.db
 config.yml
 package-lock.json
+.DS_Store
