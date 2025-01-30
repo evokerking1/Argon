@@ -1,4 +1,3 @@
-// Panel: src/routers/servers.ts
 import { Router } from 'express';
 import { z } from 'zod';
 import { hasPermission } from '../permissions';
@@ -46,10 +45,14 @@ const createServerSchema = z.object({
 // Helper Functions
 async function makeDaemonRequest(
   method: 'get' | 'post' | 'delete',
-  node: { fqdn: string; port: number; connectionKey: string },
+  node: { fqdn: string; port: number; connectionKey: string } | null | undefined,
   path: string,
   data?: any
 ) {
+  if (!node?.fqdn) {
+    throw new Error('Node information not available');
+  }
+
   try {
     const url = `http://${node.fqdn}:${node.port}${path}`;
     const response = await axios({
@@ -71,6 +74,57 @@ async function makeDaemonRequest(
   }
 }
 
+async function checkServerAccess(req: any, serverId: string) {
+  // First, get the server with all necessary relations
+  const server = await db.servers.findUnique(
+    { 
+      where: { id: serverId },
+      include: { node: true, allocation: true, unit: true }
+    }
+  );
+
+  console.log(server)
+
+  if (!server) {
+    throw new Error('Server not found');
+  }
+
+  if (!server.node) {
+    throw new Error('Server node not found');
+  }
+
+  const isAdmin = hasPermission(req.user.permissions, Permissions.ADMIN);
+  if (!isAdmin && server.userId !== req.user.id) {
+    throw new Error('Access denied');
+  }
+
+  // Get current status from daemon
+  try {
+    const status = await makeDaemonRequest(
+      'get',
+      server.node,
+      `/api/v1/servers/${server.internalId}`
+    );
+    await updateServerState(server.id, status.state);
+    return {
+      ...server,
+      status,
+      node: server.node,
+      allocation: server.allocation,
+      unit: server.unit
+    };
+  } catch (error) {
+    console.error('Failed to get server status:', error);
+    return {
+      ...server,
+      status: { state: 'unknown' },
+      node: server.node,
+      allocation: server.allocation,
+      unit: server.unit
+    };
+  }
+}
+
 async function updateServerState(serverId: string, state: string) {
   await db.servers.update(
     { id: serverId },
@@ -78,56 +132,7 @@ async function updateServerState(serverId: string, state: string) {
   );
 }
 
-async function checkServerAccess(req: any, serverId: string) {
-  const server = await db.servers.findUnique(
-    { id: serverId },
-    { 
-      node: true, 
-      allocation: true  // Include allocation info
-    }
-  );
-
-  if (!server) {
-    throw new Error('Server not found');
-  }
-
-  console.log(JSON.stringify(server, null, 2));
-
-  const isAdmin = hasPermission(req.user.permissions, Permissions.ADMIN);
-  if (!isAdmin && server.userId !== req.user.id) {
-    throw new Error('Access denied');
-  }
-
-  // Get allocation details if exists
-  let allocationDetails = null;
-  if (server.allocationId) {
-    allocationDetails = await db.allocations.findUnique({ id: server.allocationId });
-  }
-
-  // Fetch current status from daemon
-  try {
-    const status = await makeDaemonRequest(
-      'get',
-      server.node!,
-      `/api/v1/servers/${server.internalId}`
-    );
-    await updateServerState(server.id, status.state);
-    return { 
-      ...server, 
-      status,
-      allocation: allocationDetails  // Add allocation details to response
-    };
-  } catch (error) {
-    return { 
-      ...server, 
-      status: { state: 'unknown' },
-      allocation: allocationDetails  // Add allocation details to response
-    };
-  }
-}
-
 // PUBLIC ROUTES
-
 router.get('/:internalId/config', async (req, res) => {
   try {
     const server = await db.servers.findFirst({
@@ -146,7 +151,6 @@ router.get('/:internalId/config', async (req, res) => {
         description: v.description,
         defaultValue: v.defaultValue,
         rules: v.rules
-        // currentValue will be added by the daemon based on user settings
       })),
       startupCommand: server.unit!.defaultStartupCommand,
       configFiles: server.unit!.configFiles,
@@ -156,8 +160,6 @@ router.get('/:internalId/config', async (req, res) => {
         script: server.unit!.installScript.script || '# No installation script provided'
       }
     };
-
-    console.log('Server config:', JSON.stringify(config, null, 2));
 
     res.json(config);
   } catch (error) {
@@ -208,16 +210,50 @@ router.get('/:internalId/validate', authMiddleware, async (req: any, res) => {
   }
 });
 
+// Panel side
+router.post('/validate/:serverId', async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    const { validationToken } = req.body;
+
+    // Debug logging
+    console.log('Validation request received:', { serverId, validationToken });
+
+    const server = await db.servers.findFirst({
+      where: { id: serverId }
+    });
+
+    console.log('Server found:', server);
+
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    // Check if validationToken matches
+    if (server.validationToken !== validationToken) {
+      console.log('Token mismatch:', {
+        expected: server.validationToken,
+        received: validationToken
+      });
+      return res.status(403).json({ error: 'Invalid validation token' });
+    }
+
+    res.json({ valid: true });
+  } catch (error) {
+    console.error('Server validation failed:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// AUTHENTICATED ROUTES
 router.use(authMiddleware);
 
 // ADMIN ROUTES
 router.post('/', checkPermission(Permissions.ADMIN_SERVERS_CREATE), async (req: any, res) => {
   try {
     const data = createServerSchema.parse(req.body);
-    let temporaryInternalId;
-
-    // Generate a temporary internalId for the server
-    temporaryInternalId = 'TEMPORARY_ARGON_ID_' + randomUUID();
+    const serverId = randomUUID();
+    const validationToken = randomUUID();
 
     // Verify node exists and is online
     const node = await db.nodes.findUnique({ id: data.nodeId });
@@ -252,32 +288,34 @@ router.post('/', checkPermission(Permissions.ADMIN_SERVERS_CREATE), async (req: 
       { assigned: true }
     );
 
-    // Create server in the database with a temporary state
+    // Create server in database with validation token
     const server = await db.servers.create({
       ...data,
-      // Temp internalId until we get it from the daemon
-      internalId: temporaryInternalId,
+      id: serverId,
+      internalId: serverId,
+      validationToken,
       state: 'creating'
     });
 
     try {
+      // Send create request to daemon
       const daemonResponse = await makeDaemonRequest('post', node, '/api/v1/servers', {
+        serverId,
+        validationToken,
         name: data.name,
         memoryLimit: data.memoryMiB * 1024 * 1024,
         cpuLimit: Math.floor(data.cpuPercent * 1024 / 100),
         allocation: {
           bindAddress: allocation.bindAddress,
           port: allocation.port
-        },
-        temporaryInternalId
+        }
       });
 
-      // Update server with the internalId returned from the daemon
-      await db.servers.update(
-        { id: server.id },
-        { internalId: daemonResponse.id, state: 'installing' }
-      );
+      if (daemonResponse.validationToken !== validationToken) {
+        throw new Error('Daemon validation failed');
+      }
 
+      await updateServerState(server.id, 'installing');
       res.status(201).json(server);
     } catch (error) {
       // Cleanup on failure
@@ -353,11 +391,10 @@ router.get('/', checkPermission(Permissions.SERVERS_VIEW), async (req: any, res)
       }
     });
 
-    // Fetch status from daemons for each server
+    // Fetch status from daemons
     const serversWithStatus = await Promise.all(
       servers.map(async (server) => {
         try {
-          console.log('Checking server:', server.internalId);
           const status = await makeDaemonRequest(
             'get',
             server.node!,
@@ -454,6 +491,9 @@ router.post('/:id/reinstall', checkPermission(Permissions.SERVERS_MANAGE), async
 
     res.status(204).send();
   } catch (error: any) {
+    if (error.message === 'Server not found') {
+      return res.status(404).json({ error: 'Server not found' });
+    }
     if (error.message === 'Server not found') {
       return res.status(404).json({ error: 'Server not found' });
     }

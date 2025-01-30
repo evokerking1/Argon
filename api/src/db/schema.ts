@@ -53,25 +53,26 @@ export const initSchema = (db) => {
       FOREIGN KEY(nodeId) REFERENCES nodes(id)
     );
 
-    CREATE TABLE IF NOT EXISTS servers (
-      id TEXT PRIMARY KEY,
-      internalId TEXT UNIQUE NOT NULL,
-      name TEXT NOT NULL,
-      nodeId TEXT NOT NULL,
-      unitId TEXT NOT NULL,
-      userId TEXT NOT NULL,
-      allocationId TEXT NOT NULL,
-      memoryMiB INTEGER NOT NULL,
-      diskMiB INTEGER NOT NULL,
-      cpuPercent INTEGER NOT NULL,
-      state TEXT NOT NULL,
-      createdAt TEXT NOT NULL,
-      updatedAt TEXT NOT NULL,
-      FOREIGN KEY(nodeId) REFERENCES nodes(id),
-      FOREIGN KEY(unitId) REFERENCES units(id),
-      FOREIGN KEY(userId) REFERENCES users(id),
-      FOREIGN KEY(allocationId) REFERENCES allocations(id)
-    );
+CREATE TABLE IF NOT EXISTS servers (
+  id TEXT PRIMARY KEY,
+  internalId TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  nodeId TEXT NOT NULL,
+  unitId TEXT NOT NULL,
+  userId TEXT NOT NULL,
+  allocationId TEXT NOT NULL,
+  memoryMiB INTEGER NOT NULL,
+  diskMiB INTEGER NOT NULL,
+  cpuPercent INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  validationToken TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY(nodeId) REFERENCES nodes(id),
+  FOREIGN KEY(unitId) REFERENCES units(id),
+  FOREIGN KEY(userId) REFERENCES users(id),
+  FOREIGN KEY(allocationId) REFERENCES allocations(id)
+);
 
 CREATE TABLE IF NOT EXISTS allocations (
   id TEXT PRIMARY KEY,

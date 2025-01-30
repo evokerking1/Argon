@@ -1,5 +1,3 @@
-// Daemon: src/routes/servers.ts
-
 import express, { Router } from 'express';
 import { WebSocket } from 'ws';
 import { v4 as uuidv4 } from 'uuid';
@@ -34,6 +32,8 @@ interface ServerConfig {
 }
 
 interface CreateServerRequest {
+  serverId: string;
+  validationToken: string;
   name: string;
   memoryLimit: number;
   cpuLimit: number;
@@ -41,12 +41,11 @@ interface CreateServerRequest {
     bindAddress: string;
     port: number;
   };
-  temporaryInternalId: string;
 }
 
 // Helper functions for server management
-async function fetchServerConfig(appUrl: string, serverId: string, temporaryId: string): Promise<ServerConfig> {
-  const url = `${appUrl}/api/servers/${temporaryId}/config`;
+async function fetchServerConfig(appUrl: string, serverId: string): Promise<ServerConfig> {
+  const url = `${appUrl}/api/servers/${serverId}/config`;
   const maxRetries = 3;
   let lastError: any;
 
@@ -68,16 +67,27 @@ async function fetchServerConfig(appUrl: string, serverId: string, temporaryId: 
   throw new Error(`Failed to fetch server configuration after ${maxRetries} attempts: ${lastError?.message}`);
 }
 
+async function validateServerWithPanel(appUrl: string, serverId: string, validationToken: string): Promise<boolean> {
+  try {
+    const response = await axios.post(
+      `${appUrl}/api/servers/validate/${serverId}`,
+      { validationToken },
+      { timeout: 5000 }
+    );
+    return response.status === 200;
+  } catch (error) {
+    console.error('Failed to validate server with panel:', error);
+    return false;
+  }
+}
+
 async function writeConfigFiles(volumePath: string, configFiles: ServerConfig['configFiles']): Promise<void> {
   for (const file of configFiles) {
-    // Sanitize path to prevent directory traversal
     const safePath = path.normalize(file.path).replace(/^(\.\.[\/\\])+/, '');
     const fullPath = path.join(volumePath, safePath);
     
-    // Ensure parent directory exists
     await fs.mkdir(path.dirname(fullPath), { recursive: true });
     
-    // Write file
     try {
       await fs.writeFile(fullPath, file.content, 'utf8');
       console.log(`Created config file: ${safePath}`);
@@ -88,7 +98,6 @@ async function writeConfigFiles(volumePath: string, configFiles: ServerConfig['c
   }
 }
 
-// Process variables in startup commands and scripts
 function processVariables(input: string, variables: ServerConfig['variables']): string {
   let result = input;
   
@@ -149,7 +158,6 @@ function sanitizeVolumeName(name: string): string {
   return name.replace(/[^a-zA-Z0-9_.-]/g, '_');
 }
 
-// Add this helper at the top with other functions
 function logEvent(serverId: string, message: string, error?: any) {
   const timestamp = new Date().toISOString();
   const logMessage = `[${timestamp}] [Server ${serverId}] ${message}`;
@@ -159,6 +167,7 @@ function logEvent(serverId: string, message: string, error?: any) {
   }
 }
 
+// Main server installation process
 export async function runInstallation(
   appState: AppState, 
   serverId: string,
@@ -171,7 +180,6 @@ export async function runInstallation(
   logEvent(serverId, 'Starting installation process');
   
   try {
-    // Pull images with logging
     logEvent(serverId, 'Pulling required Docker images');
     await Promise.all([
       pullDockerImage(docker, serverConfig.install.dockerImage)
@@ -180,11 +188,9 @@ export async function runInstallation(
         .then(() => logEvent(serverId, `Successfully pulled server image: ${serverConfig.dockerImage}`))
     ]);
 
-    // Volume setup logging
     logEvent(serverId, `Creating volume directory at: ${volumePath}`);
     await fs.mkdir(volumePath, { recursive: true });
 
-    // Config files logging
     if (serverConfig.configFiles.length > 0) {
       logEvent(serverId, `Writing ${serverConfig.configFiles.length} configuration files`);
       await writeConfigFiles(volumePath, serverConfig.configFiles);
@@ -194,10 +200,9 @@ export async function runInstallation(
     logEvent(serverId, `Creating installation container: ${installContainerName}`);
 
     const processedScript = processVariables(serverConfig.install.script, serverConfig.variables);
-    logEvent(serverId, 'Writing installation script');
     
     const scriptContent = `#!/bin/bash
-set -ex  # Enable debug mode and exit on error
+set -ex
 echo "Starting installation script..."
 cd /mnt/server
 pwd
@@ -207,9 +212,7 @@ echo "Installation script completed"
 `;
     
     await fs.writeFile(path.join(volumePath, 'install.sh'), scriptContent, { mode: 0o755 });
-    logEvent(serverId, 'Script content written to disk with executable permissions');
 
-    // Create container with the script execution as the command
     const container = await docker.createContainer({
       name: installContainerName,
       Image: serverConfig.install.dockerImage,
@@ -220,15 +223,15 @@ echo "Installation script completed"
       WorkingDir: '/mnt/server',
       Entrypoint: ["/bin/bash"],
       Cmd: ["./install.sh"],
+      AttachStdin: true,
       AttachStdout: true,
       AttachStderr: true,
-      Tty: false,
-      OpenStdin: false
+      Tty: true,
+      OpenStdin: true
     });
 
     logEvent(serverId, 'Starting installation container');
 
-    // Attach to container to get output
     const stream = await container.attach({
       stream: true,
       stdout: true,
@@ -237,7 +240,6 @@ echo "Installation script completed"
 
     let output = '';
 
-    // Create output handling streams
     const stdout = new Writable({
       write(chunk: Buffer, encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
         const message = chunk.toString().trim();
@@ -272,13 +274,10 @@ echo "Installation script completed"
 
     docker.modem.demuxStream(stream, stdout, stderr);
 
-    // Start the container
     await container.start();
 
-    // Wait for container to finish
     const result = await container.wait();
 
-    // Check exit code
     if (result.StatusCode !== 0) {
       throw new Error(`Installation failed with exit code ${result.StatusCode}. Output: ${output}`);
     }
@@ -292,16 +291,14 @@ echo "Installation script completed"
     try {
       const container = docker.getContainer(`${safeServerId}_install`);
       logEvent(serverId, 'Cleaning up installation container');
-      await container.remove({ force: true }).catch(() => {
-        // Ignore removal errors as the container might already be removed
-      });
+      await container.remove({ force: true }).catch(() => {});
     } catch (cleanupError) {
       logEvent(serverId, 'Failed to remove installation container', cleanupError);
     }
   }
 }
 
-// Create the actual game server container
+// Create the game server container
 async function createGameContainer(
   appState: AppState,
   serverId: string,
@@ -314,26 +311,94 @@ async function createGameContainer(
   const safeServerId = sanitizeVolumeName(serverId);
   const volumePath = path.resolve(`${appState.config.volumesDirectory}/${safeServerId}`);
   
-  const processedCommand = processVariables(config.startupCommand, config.variables);
+  const processedStartupCommand = processVariables(config.startupCommand, config.variables);
   
+  // Map environment variables from the config
+  const environmentVariables = [
+    'TERM=xterm',
+    'HOME=/home/container',
+    'USER=container',
+    `STARTUP=${processedStartupCommand}`,
+    ...config.variables.map(variable => 
+      `${variable.name}=${variable.currentValue || variable.defaultValue}`
+    )
+  ];
+
   const container = await docker.createContainer({
     name: safeServerId,
     Image: config.dockerImage,
-    Cmd: ['/bin/bash', '-c', processedCommand],
+    
+    // Don't override the entrypoint/cmd - let the image handle it
+    Entrypoint: undefined,
+    Cmd: undefined,
+    
+    // Standard configuration
     WorkingDir: '/home/container',
+    AttachStdin: true,
+    AttachStdout: true,
+    AttachStderr: true,
+    OpenStdin: true,
+    Tty: false,
+    StdinOnce: false,
+    User: 'container',
+    
+    // Environment setup
+    Env: environmentVariables,
+    
     HostConfig: {
+      // Memory limits
       Memory: memoryLimit,
-      MemorySwap: memoryLimit,
-      CpuShares: cpuLimit,
-      Binds: [`${volumePath}:/home/container`],
+      MemorySwap: memoryLimit * 2, // Double the memory limit for swap
+      
+      // CPU limits if provided
+      CpuQuota: cpuLimit ? cpuLimit * 100000 : 0,
+      CpuPeriod: 100000,
+      
+      // Network configuration
+      NetworkMode: 'bridge',
+      
+      // Security options
+      Init: true,
+      SecurityOpt: ['no-new-privileges'],
+      ReadonlyPaths: [
+        '/proc/bus',
+        '/proc/fs',
+        '/proc/irq',
+        '/proc/sys',
+        '/proc/sysrq-trigger'
+      ],
+      
+      // Container restart policy
+      RestartPolicy: {
+        Name: 'unless-stopped'
+      },
+      
+      // Volume mounting
+      Binds: [`${volumePath}:/home/container:rw`],
+      
+      // Port bindings - handle both TCP and UDP
       PortBindings: {
-        [`${allocation.port}/tcp`]: [{ HostIp: allocation.bindAddress, HostPort: allocation.port.toString() }],
-        [`${allocation.port}/udp`]: [{ HostIp: allocation.bindAddress, HostPort: allocation.port.toString() }]
-      }
+        [`${allocation.port}/tcp`]: [{
+          HostIp: allocation.bindAddress,
+          HostPort: allocation.port.toString()
+        }],
+        [`${allocation.port}/udp`]: [{
+          HostIp: allocation.bindAddress,
+          HostPort: allocation.port.toString()
+        }]
+      },
     },
+    
+    // Expose both TCP and UDP ports
     ExposedPorts: {
       [`${allocation.port}/tcp`]: {},
       [`${allocation.port}/udp`]: {}
+    },
+
+    // Labels for container identification
+    Labels: {
+      'pterodactyl.server.id': serverId,
+      'pterodactyl.server.name': safeServerId
     }
   });
 
@@ -347,11 +412,16 @@ export function configureServersRouter(appState: AppState): Router {
   // Create server
   router.post('/', async (req, res) => {
     try {
-      const { name, memoryLimit, cpuLimit, allocation, temporaryInternalId } = req.body as CreateServerRequest;
-      const serverId = uuidv4();
+      const { serverId, validationToken, name, memoryLimit, cpuLimit, allocation } = req.body as CreateServerRequest;
+      
+      // Validate with panel first
+      const isValid = await validateServerWithPanel(appState.config.appUrl, serverId, validationToken);
+      if (!isValid) {
+        return res.status(403).json({ error: 'Invalid server registration' });
+      }
       
       // Get server configuration from panel
-      const serverConfig = await fetchServerConfig(appState.config.appUrl, serverId, temporaryInternalId);
+      const serverConfig = await fetchServerConfig(appState.config.appUrl, serverId);
       
       // Create initial database entry
       await appState.db.run(
@@ -374,10 +444,17 @@ export function configureServersRouter(appState: AppState): Router {
         ]
       );
       
+      // Return success with validation token to confirm identity
+      res.status(201).json({
+        id: serverId,
+        name,
+        state: ServerState.Installing,
+        validationToken
+      });
+
       // Begin installation process
       runInstallation(appState, serverId, serverConfig)
         .then(async () => {
-          // Create the game container after successful installation
           const dockerId = await createGameContainer(
             appState,
             serverId,
@@ -387,15 +464,9 @@ export function configureServersRouter(appState: AppState): Router {
             allocation
           );
 
-          // Add this missing update statement:
           await appState.db.run(
             'UPDATE servers SET docker_id = ?, state = ? WHERE id = ?',
             [dockerId, ServerState.Installed, serverId]
-          );
-
-          await appState.db.run(
-            'UPDATE servers SET state = ? WHERE id = ?',
-            [ServerState.Installed, serverId]
           );
         })
         .catch(async (error) => {
@@ -405,13 +476,6 @@ export function configureServersRouter(appState: AppState): Router {
             [ServerState.InstallFailed, serverId]
           );
         });
-      
-      res.status(201).json({
-        id: serverId,
-        name,
-        state: ServerState.Installing
-      });
-      
     } catch (error) {
       console.error('Failed to create server:', error);
       res.status(500).json({ error: error.message });
@@ -441,6 +505,23 @@ export function configureServersRouter(appState: AppState): Router {
         return res.status(404).json({ error: 'Server not found' });
       }
       
+      // Get container status if available
+      if (server.docker_id) {
+        try {
+          const container = appState.docker.getContainer(server.docker_id);
+          const status = await container.inspect();
+          server.status = {
+            state: status.State.Status,
+            running: status.State.Running,
+            startedAt: status.State.StartedAt,
+            finishedAt: status.State.FinishedAt
+          };
+        } catch (error) {
+          console.error('Failed to get container status:', error);
+          server.status = { state: 'unknown' };
+        }
+      }
+      
       res.json(server);
     } catch (error) {
       console.error('Failed to get server:', error);
@@ -462,19 +543,26 @@ export function configureServersRouter(appState: AppState): Router {
         return res.status(404).json({ error: 'Server not found' });
       }
 
+      // Remove container if it exists
       if (server.docker_id) {
         try {
           const container = appState.docker.getContainer(server.docker_id);
           await container.remove({ force: true, v: true });
+          logEvent(id, 'Removed container');
         } catch (error) {
           console.error('Failed to remove container:', error);
+          logEvent(id, 'Failed to remove container', error);
         }
       }
 
+      // Remove volume directory
       const volumePath = `${appState.config.volumesDirectory}/${safeId}`;
       await fs.rm(volumePath, { recursive: true, force: true });
+      logEvent(id, 'Removed volume directory');
 
+      // Remove from database
       await appState.db.run('DELETE FROM servers WHERE id = ?', [id]);
+      logEvent(id, 'Removed from database');
 
       res.json({ message: 'Server deleted successfully' });
     } catch (error) {
@@ -487,7 +575,7 @@ export function configureServersRouter(appState: AppState): Router {
   router.post('/:id/reinstall', async (req, res) => {
     try {
       const { id } = req.params;
-      const serverConfig = await fetchServerConfig(appState.config.appUrl,id, id);
+      const serverConfig = await fetchServerConfig(appState.config.appUrl, id);
 
       const server = await appState.db.get(
         'SELECT docker_id FROM servers WHERE id = ?',
@@ -498,12 +586,15 @@ export function configureServersRouter(appState: AppState): Router {
         return res.status(404).json({ error: 'Server not found' });
       }
 
+      // Remove existing container if it exists
       if (server.docker_id) {
         try {
           const container = appState.docker.getContainer(server.docker_id);
           await container.remove({ force: true });
+          logEvent(id, 'Removed existing container for reinstall');
         } catch (error) {
           console.error('Failed to remove container:', error);
+          logEvent(id, 'Failed to remove container for reinstall', error);
         }
       }
 
@@ -512,7 +603,10 @@ export function configureServersRouter(appState: AppState): Router {
         [ServerState.Installing, id]
       );
 
+      // Run installation process
+      logEvent(id, 'Starting reinstallation process');
       await runInstallation(appState, id, serverConfig);
+      logEvent(id, 'Reinstallation completed');
 
       await appState.db.run(
         'UPDATE servers SET state = ? WHERE id = ?',
@@ -522,11 +616,58 @@ export function configureServersRouter(appState: AppState): Router {
       res.json({ message: 'Server reinstallation completed' });
     } catch (error) {
       console.error('Failed to reinstall server:', error);
+      logEvent(req.params.id, 'Reinstallation failed', error);
       await appState.db.run(
         'UPDATE servers SET state = ? WHERE id = ?',
-        [ServerState.Errored, req.params.id]  // Fixed: use req.params.id instead of id
-      ).catch(err => console.error('Failed to update error state:', err));
-      
+        [ServerState.InstallFailed, req.params.id]
+      );
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Power actions (start, stop, restart)
+  router.post('/:id/power/:action', async (req, res) => {
+    try {
+      const { id, action } = req.params;
+
+      if (!['start', 'stop', 'restart'].includes(action)) {
+        return res.status(400).json({ error: 'Invalid power action' });
+      }
+
+      const server = await appState.db.get(
+        'SELECT docker_id FROM servers WHERE id = ?',
+        [id]
+      );
+
+      if (!server?.docker_id) {
+        return res.status(404).json({ error: 'Server or container not found' });
+      }
+
+      const container = appState.docker.getContainer(server.docker_id);
+      logEvent(id, `Executing power action: ${action}`);
+
+      switch (action) {
+        case 'start':
+          await container.start();
+          break;
+        case 'stop':
+          await container.stop();
+          break;
+        case 'restart':
+          await container.restart();
+          break;
+      }
+
+      // Update container status
+      const status = await container.inspect();
+      await appState.db.run(
+        'UPDATE servers SET state = ? WHERE id = ?',
+        [status.State.Status, id]
+      );
+
+      res.json({ message: `Power action ${action} completed successfully` });
+    } catch (error) {
+      console.error('Failed to execute power action:', error);
       res.status(500).json({ error: error.message });
     }
   });

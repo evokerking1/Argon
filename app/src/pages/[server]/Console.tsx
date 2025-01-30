@@ -226,14 +226,50 @@ const ServerConsolePage = () => {
 
   const sendCommand = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!command.trim() || !wsRef.current) return;
-
-    wsRef.current.send(JSON.stringify({
-      event: 'send_command',
-      data: command
-    }));
-
-    setCommand('');
+    if (!command.trim() || !wsRef.current) {
+      // Add visual feedback for why command wasn't sent
+      setMessages(prev => [...prev, '\x1b[33m[System] Cannot send command - WebSocket not connected or empty command\x1b[0m']);
+      return;
+    }
+  
+    if (!isServerActive) {
+      setMessages(prev => [...prev, '\x1b[33m[System] Cannot send command - server is not running\x1b[0m']);
+      return;
+    }
+  
+    try {
+      wsRef.current.send(JSON.stringify({
+        event: 'send_command',
+        data: command
+      }));
+  
+      // Log successful send
+      setMessages(prev => [...prev, '\x1b[32m$ \x1b[0m' + command + '\x1b[0m']);
+      setCommand('');
+    } catch (error) {
+      // Log any errors
+      setMessages(prev => [...prev, `\x1b[31m[System] Failed to send command: ${error}\x1b[0m`]);
+    }
+  };
+  
+  // Add this function to verify WebSocket state
+  const checkWebSocketStatus = () => {
+    if (!wsRef.current) {
+      return 'No WebSocket connection';
+    }
+    
+    switch (wsRef.current.readyState) {
+      case WebSocket.CONNECTING:
+        return 'Connecting...';
+      case WebSocket.OPEN:
+        return 'Connected';
+      case WebSocket.CLOSING:
+        return 'Closing...';
+      case WebSocket.CLOSED:
+        return 'Closed';
+      default:
+        return 'Unknown';
+    }
   };
 
   const handlePowerAction = async (action: 'start' | 'stop' | 'restart') => {
@@ -346,7 +382,7 @@ const ServerConsolePage = () => {
                 'bg-yellow-500'
               }`} />
               {/* @ts-ignore */}
-              <span>{server?.state.charAt(0).toUpperCase() + server?.state.slice(1)}</span>
+              <span>{(server?.state.charAt(0).toUpperCase() + server?.state.slice(1)).replace('Installed', 'Connecting...')}</span>
             </div>
           </div>
         </div>
@@ -418,29 +454,34 @@ const ServerConsolePage = () => {
               <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-500 mt-4">
                 <Terminal className="w-12 h-12 mb-2 opacity-80 bg-gray-800 rounded-full p-3" />
                 <p className="text-sm mt-2 text-gray-400/80 font-medium">No console output available</p>
-                <p className="text-xs mt-1">Start the server to view console logs</p>
+                <p className="text-xs mt-1">Perform an action to see some logs here!</p>
               </div>
             )}
           </div>
 
           <div className="bg-gray-800 p-2 m-2 rounded-b-xl rounded-t-md">
-            <form onSubmit={sendCommand} className="flex items-center space-x-3">
-              <input
-                type="text"
-                value={command}
-                onChange={(e) => setCommand(e.target.value)}
-                placeholder="Enter a command..."
-                className="flex-1 bg-gray-800 text-gray-100 text-xs rounded-md px-3 py-2 focus:outline-none focus:ring-1 focus:ring-gray-700 placeholder:text-gray-500"
-              />
-              <button
-                type="submit"
-                disabled={!connected}
-                className="flex items-center px-3 py-2 cursor-pointer border border-white/5 text-xs font-medium text-gray-300 bg-gray-800 rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
-              >
-                <SendIcon className="w-3.5 h-3.5 mr-1.5" />
-                Send
-              </button>
-            </form>
+          <form onSubmit={sendCommand} className="flex items-center space-x-3">
+  <input
+    type="text"
+    value={command}
+    onChange={(e) => setCommand(e.target.value)}
+    placeholder="Enter a command..."
+    className="flex-1 bg-gray-800 text-gray-100 text-xs rounded-md px-3 py-2 focus:outline-none focus:ring-1 focus:ring-gray-700 placeholder:text-gray-500"
+  />
+  <div className="flex items-center space-x-2">
+    <span className="text-xs text-gray-500">
+      {checkWebSocketStatus()}
+    </span>
+    <button
+      type="submit"
+      disabled={!connected || !isServerActive}
+      className="flex items-center px-3 py-2 cursor-pointer border border-white/5 text-xs font-medium text-gray-300 bg-gray-800 rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+    >
+      <SendIcon className="w-3.5 h-3.5 mr-1.5" />
+      Send
+    </button>
+  </div>
+</form>
           </div>
         </div>
       </div>

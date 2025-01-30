@@ -93,6 +93,7 @@ export interface Server {
     username: string;
   };
   allocation?: Allocation;
+  validationToken?: string;
 }
 
 export type WhereInput<T> = Partial<{ [K in keyof T]: T[K] }>;
