@@ -82,7 +82,7 @@ export class WebSocketManager {
   private formatLogMessage(type: LogType, message: string): string {
     switch (type) {
       case LogType.INFO:
-        return chalk.blue(message);
+        return chalk.hex('90a2b9')(message);
       case LogType.SUCCESS:
         return chalk.green(message);
       case LogType.ERROR:
@@ -90,7 +90,7 @@ export class WebSocketManager {
       case LogType.WARNING:
         return chalk.yellow(message);
       case LogType.DAEMON:
-        return chalk.yellow(`[Krypton Daemon] ${message}`);
+        return chalk.yellow(`[Krypton Daemon]`) + ' ' + message;
       default:
         return message;
     }
@@ -438,7 +438,7 @@ export class WebSocketManager {
       session.socket.send(JSON.stringify({
         event: 'power_status',
         data: {
-          status: state === 'running' ? 'success' : 'error',
+          status: state === 'running' ? `${chalk.yellow('[Krypton Daemon]')} The power state was successfully changed!` : `${chalk.yellow('[Krypton Daemon]')} Failed to change power state. If you are booting the server, this means the initial startup command failed/exited or is not valid.`,
           action,
           state,
           error

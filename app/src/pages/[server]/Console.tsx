@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
-  ArrowLeftIcon, SendIcon, Play, Square, RefreshCw, 
-  Server, Cpu, MemoryStick, HardDrive, Clock, Info 
+  SendIcon, Play, Square, RefreshCw,
+  ChevronRight, AlertCircle, Globe, Clock, Hash, Terminal
 } from 'lucide-react';
 import LoadingSpinner from '../../components/LoadingSpinner';
-import AnsiToHtml from 'ansi-to-html';
+import AnsiParser from '../../components/AnsiParser';
 
 interface Node {
   id: string;
@@ -61,8 +61,8 @@ interface ConsoleMessage {
   };
 }
 
-const formatBytes = (bytes: number, decimals = 2): string => {
-  if (bytes === 0) return '0 Bytes';
+const formatBytes = (bytes: number | undefined, decimals = 2): string => {
+  if (!bytes || bytes === 0) return '0 Bytes';
   const k = 1024;
   const dm = decimals < 0 ? 0 : decimals;
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
@@ -93,17 +93,6 @@ const ServerConsolePage = () => {
   const wsRef = useRef<WebSocket | null>(null);
   const consoleRef = useRef<HTMLDivElement>(null);
 
-  const ansiToHtml = new AnsiToHtml({
-    fg: '#d4d4d4',
-    bg: '#1e1e1e',
-    colors: {
-      0: '#000000', 1: '#d16969', 2: '#b5cea8', 3: '#d7ba7d', 
-      4: '#569cd6', 5: '#c586c0', 6: '#9cdcfe', 7: '#d4d4d4', 
-      8: '#808080', 9: '#d16969', 10: '#b5cea8', 11: '#d7ba7d', 
-      12: '#569cd6', 13: '#c586c0', 14: '#9cdcfe', 15: '#ffffff'
-    }
-  });
-
   useEffect(() => {
     const fetchServer = async () => {
       try {
@@ -123,6 +112,8 @@ const ServerConsolePage = () => {
         
         setServer(data);
         initWebSocket(data);
+
+
       } catch (err) {
         setError(err instanceof Error ? err.message : 'An error occurred');
       } finally {
@@ -152,12 +143,10 @@ const ServerConsolePage = () => {
       return;
     }
 
-    // Check if WebSocket is already open
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       return;
     }
 
-    // Add token as URL parameter instead of header
     const wsUrl = `ws://${serverData.node.fqdn}:${serverData.node.port}?server=${serverData.internalId}&token=${token}`;
     
     const ws = new WebSocket(wsUrl);
@@ -166,6 +155,7 @@ const ServerConsolePage = () => {
     ws.onopen = () => {
       console.log('WebSocket connected');
       setConnected(true);
+      setError(null);
     };
 
     ws.onmessage = (event) => {
@@ -173,12 +163,15 @@ const ServerConsolePage = () => {
       
       switch (message.event) {
         case 'console_output':
-          setMessages(prev => [...prev, ansiToHtml.toHtml(message.data.message || '')]);
+          if (message.data.message) {
+            // @ts-ignore
+            setMessages(prev => [...prev, message.data.message]);
+          }
           break;
         
         case 'auth_success':
           if (message.data.logs) {
-            setMessages(message.data.logs.map(log => ansiToHtml.toHtml(log)));
+            setMessages(message.data.logs.map(log => log));
           }
           break;
         
@@ -199,8 +192,9 @@ const ServerConsolePage = () => {
           break;
         
         case 'power_status':
-          if (message.data.status) {
-            setMessages(prev => [...prev, ansiToHtml.toHtml(message.data.status || '')]);
+          if (message.data.status !== undefined) {
+            // @ts-ignore
+            setMessages(prev => [...prev, message.data.status.toString()]);
           }
           setPowerLoading(false);
           break;
@@ -208,7 +202,7 @@ const ServerConsolePage = () => {
         case 'error':
           const errorMsg = message.data.message || 'An unknown error occurred';
           setError(errorMsg);
-          setMessages(prev => [...prev, ansiToHtml.toHtml(`Error: ${errorMsg}`)]);
+          setMessages(prev => [...prev, `Error: ${errorMsg}`]);
           setPowerLoading(false);
           break;
       }
@@ -251,16 +245,14 @@ const ServerConsolePage = () => {
         event: 'power_action',
         data: { action }
       }));
-      
     } catch (err) {
       setError(err instanceof Error ? err.message : `Failed to ${action} server`);
-    } finally {
       setPowerLoading(false);
     }
   };
 
   const getStateColor = (state: string) => {
-    switch (state) {
+    switch (state?.toLowerCase()) {
       case 'running': return 'text-green-500';
       case 'stopped': return 'text-red-500';
       case 'installing': return 'text-yellow-500';
@@ -270,159 +262,180 @@ const ServerConsolePage = () => {
 
   if (loading) return <LoadingSpinner />;
 
-  if (error) {
-    return (
-      <div className="min-h-screen bg-gray-50 p-6">
-        <div className="text-red-600 text-xs">Error: {error}</div>
-      </div>
-    );
-  }
+  const isServerActive = server?.state?.toLowerCase() === 'running';
+  let allocation;
+
+  allocation = server?.status?.allocation ? JSON.parse(server.status.allocation) : null; // legacy
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-6xl mx-auto space-y-4">
-        {/* Header with Back and Server Name */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
+    <div className="min-h-screen px-8 py-8">
+      <div className="max-w-[1500px] mx-auto p-4 space-y-6">
+        {/* Header Section */}
+        <div className="space-y-3">
+          {/* Breadcrumb */}
+          <div className="flex items-center text-sm text-gray-600">
             <button
-              onClick={() => navigate(`/servers`)}
-              className="flex items-center text-gray-600 hover:bg-gray-100 p-2 rounded-md transition hover:text-gray-900"
+              onClick={() => navigate('/servers')}
+              className="hover:text-gray-900"
             >
-              <ArrowLeftIcon className="w-4 h-4" />
+              Servers
             </button>
-            <div>
-              <h1 className="text-lg font-semibold text-gray-900">{server?.name}</h1>
-              <p className="text-xs text-gray-500">{server?.internalId}</p>
-            </div>
+            <ChevronRight className="w-4 h-4 mx-1" />
+            <span className="text-gray-900 font-medium">{server?.name}</span>
           </div>
-          
-          {/* Power Controls */}
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={() => handlePowerAction('start')}
-              disabled={powerLoading || server?.state === 'running'}
-              className="flex items-center px-3 py-2 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Play className="w-3.5 h-3.5 mr-1.5" />
-              Start
-            </button>
-            <button
-              onClick={() => handlePowerAction('stop')}
-              disabled={powerLoading || server?.state !== 'running'}
-              className="flex items-center px-3 py-2 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Square className="w-3.5 h-3.5 mr-1.5" />
-              Stop
-            </button>
-            <button
-              onClick={() => handlePowerAction('restart')}
-              disabled={powerLoading || server?.state !== 'running'}
-              className="flex items-center px-3 py-2 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-              Restart
-            </button>
-          </div>
-        </div>
 
-        {/* Server Details and Resource Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Server Information */}
-          <div className="bg-white border border-gray-200 rounded-md p-4 space-y-3">
-            <div className="flex items-center space-x-2">
-              <Server className="w-5 h-5 text-gray-600" />
-              <h2 className="text-sm font-semibold">Server Details</h2>
-            </div>
-            <div className="space-y-2 text-xs">
-              <div className="flex justify-between">
-                <span className="text-gray-600">State:</span>
-                <span className={`font-medium ${getStateColor(server?.state || '')}`}>
-                  {server?.state || 'Unknown'}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Image:</span>
-                <span>{server?.status.image || 'N/A'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Node:</span>
-                <span>{server?.node.name || 'N/A'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Created:</span>
-                <span>{new Date(server?.createdAt || '').toLocaleString()}</span>
+          {/* Title and Actions */}
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-semibold text-gray-900">{server?.name}</h1>
+            <div className="flex items-center space-x-3">
+              {error && (
+                <div className="flex items-center px-3 py-1.5 text-xs text-red-700 bg-red-50 border border-red-100 rounded-md">
+                  <AlertCircle className="w-3.5 h-3.5 mr-1.5" />
+                  {error}
+                </div>
+              )}
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => handlePowerAction('start')}
+                  disabled={powerLoading || isServerActive}
+                  className="flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-all duration-200"
+                >
+                  <Play className="w-3.5 h-3.5 mr-1.5" />
+                  Start
+                </button>
+                <button
+                  onClick={() => handlePowerAction('stop')}
+                  disabled={powerLoading || !isServerActive}
+                  className="flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-all duration-200"
+                >
+                  <Square className="w-3.5 h-3.5 mr-1.5" />
+                  Stop
+                </button>
+                <button
+                  onClick={() => handlePowerAction('restart')}
+                  disabled={powerLoading || !isServerActive}
+                  className="flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-all duration-200"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                  Restart
+                </button>
               </div>
             </div>
           </div>
 
-          {/* Resource Stats */}
-          <div className="bg-white border border-gray-200 rounded-md p-4 space-y-3">
-            <div className="flex items-center space-x-2">
-              <Info className="w-5 h-5 text-gray-600" />
-              <h2 className="text-sm font-semibold">Resource Stats</h2>
+          {/* Metadata */}
+          <div className="flex items-center space-x-6 text-sm">
+            <div className="flex items-center text-gray-500">
+              <Hash className="w-4 h-4 mr-1.5" />
+              <span>{server?.internalId}</span>
             </div>
-            <div className="space-y-2 text-xs">
-              <div className="flex justify-between items-center">
-                <div className="flex items-center space-x-2">
-                  <Cpu className="w-4 h-4 text-gray-600" />
-                  <span className="text-gray-600">CPU:</span>
-                </div>
-                <span>{liveStats.cpuPercent.toFixed(2)}% / {server?.status.cpu_limit || 'N/A'}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <div className="flex items-center space-x-2">
-                  <MemoryStick className="w-4 h-4 text-gray-600" />
-                  <span className="text-gray-600">Memory:</span>
-                </div>
-                <span>
-                  {formatBytes(liveStats.memory.used)} / {formatBytes(server?.status.memory_limit || 0)} 
-                  ({liveStats.memory.percent.toFixed(2)}%)
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <div className="flex items-center space-x-2">
-                  <HardDrive className="w-4 h-4 text-gray-600" />
-                  <span className="text-gray-600">Disk:</span>
-                </div>
-                <span>{formatBytes((server?.diskMiB ?? 0) * 1024 * 1024)}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <div className="flex items-center space-x-2">
-                  <Clock className="w-4 h-4 text-gray-600" />
-                  <span className="text-gray-600">Network:</span>
-                </div>
-                <span>
-                  ↓ {formatBytes(liveStats.network.rxBytes)}/s | 
-                  ↑ {formatBytes(liveStats.network.txBytes)}/s
-                </span>
-              </div>
+            <div className="flex items-center text-gray-500">
+              <Globe className="w-4 h-4 mr-1.5" />
+              {/* @ts-ignore */}
+              <span>{server?.allocation.alias ? server?.allocation.alias : server?.allocation.bindAddress}:{allocation?.port}</span>
+            </div>
+            <div className="flex items-center text-gray-500">
+              <Clock className="w-4 h-4 mr-1.5" />
+              <span>Created {new Date(server?.createdAt || '').toLocaleDateString()}</span>
+            </div>
+            <div className={`flex items-center ${getStateColor(server?.state || '')}`}>
+              <div className={`w-2 h-2 rounded-full mr-2 ${
+                server?.state?.toLowerCase() === 'running' ? 'bg-green-500' :
+                server?.state?.toLowerCase() === 'exited' ? 'bg-red-500' :
+                server?.state?.toLowerCase() === 'installed' ? 'bg-gray-500' :
+                'bg-yellow-500'
+              }`} />
+              {/* @ts-ignore */}
+              <span>{server?.state.charAt(0).toUpperCase() + server?.state.slice(1)}</span>
             </div>
           </div>
         </div>
 
-        {/* Console Container */}
-        <div className="bg-gray-900 border border-gray-800 rounded-md shadow-sm">
-          {/* Console Output */}
+{/* Stats Row */}
+<div className="grid grid-cols-4 gap-6 border-t border-b border-gray-200/50 py-8">
+  <div className="border-r border-gray-200">
+    <p className="text-sm font-medium text-gray-500">CPU Usage</p>
+    <div className="flex items-baseline mt-1">
+      <p className="text-2xl font-semibold text-gray-900">
+        {isServerActive ? `${liveStats.cpuPercent.toFixed(1)}%` : '-'}
+      </p>
+    </div>
+  </div>
+
+  <div className="border-r border-gray-200">
+    <p className="text-sm font-medium text-gray-500">Memory</p>
+    <div className="flex items-baseline mt-1">
+      <p className="text-2xl font-semibold text-gray-900">
+        {isServerActive ? formatBytes(liveStats.memory.used) : '-'}
+      </p>
+      {isServerActive && (
+        <span className="ml-2 text-sm font-medium text-gray-500">
+          / {formatBytes(server?.status.memory_limit)}
+        </span>
+      )}
+    </div>
+  </div>
+
+  <div className="border-r border-gray-200">
+    <p className="text-sm font-medium text-gray-500">Network I/O</p>
+    <div className="flex items-baseline mt-1">
+      <p className="text-2xl font-semibold text-gray-900">
+        {isServerActive ? formatBytes(liveStats.network.rxBytes) : '-'}
+      </p>
+      {isServerActive && (
+        <span className="ml-2 text-sm font-medium text-gray-500">
+          /s in
+        </span>
+      )}
+    </div>
+  </div>
+
+  <div>
+    <p className="text-sm font-medium text-gray-500">Disk Space</p>
+    <div className="flex items-baseline mt-1">
+      <p className="text-2xl font-semibold text-gray-900">
+        {formatBytes((server?.diskMiB || 0) * 1024 * 1024)}
+      </p>
+      <span className="ml-2 text-sm font-medium text-gray-500">total</span>
+    </div>
+  </div>
+</div>
+
+        {/* Console */}
+        <div className="border-2 border-gray-50 rounded-2xl ring-2 ring-gray-50 ring-offset-1 ring-offset-gray-400 bg-gray-900">
           <div 
             ref={consoleRef}
-            className="h-[600px] p-4 text-xs text-gray-300 overflow-y-auto whitespace-pre-wrap font-mono"
-            dangerouslySetInnerHTML={{ __html: messages.join('<br/>') }}
-          />
+            style={{
+              fontFamily: 'Geist Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+            }}
+            className="h-[400px] p-4 overflow-y-auto text-xs text-gray-300 relative"
+          >
+            {messages.length > 0 ? (
+              messages.map((msg, index) => (
+                <AnsiParser key={index} text={msg} />
+              ))
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-500 mt-4">
+                <Terminal className="w-12 h-12 mb-2 opacity-80 bg-gray-800 rounded-full p-3" />
+                <p className="text-sm mt-2 text-gray-400/80 font-medium">No console output available</p>
+                <p className="text-xs mt-1">Start the server to view console logs</p>
+              </div>
+            )}
+          </div>
 
-          {/* Command Input */}
-          <div className="border-t border-gray-800 p-4">
+          <div className="bg-gray-800 p-2 m-2 rounded-b-xl rounded-t-md">
             <form onSubmit={sendCommand} className="flex items-center space-x-3">
               <input
                 type="text"
                 value={command}
                 onChange={(e) => setCommand(e.target.value)}
                 placeholder="Enter a command..."
-                className="flex-1 bg-gray-800 text-gray-100 text-xs rounded-md px-3 py-2 focus:outline-none focus:ring-1 focus:ring-gray-700"
+                className="flex-1 bg-gray-800 text-gray-100 text-xs rounded-md px-3 py-2 focus:outline-none focus:ring-1 focus:ring-gray-700 placeholder:text-gray-500"
               />
               <button
                 type="submit"
                 disabled={!connected}
-                className="flex items-center px-3 py-2 text-xs font-medium text-gray-300 bg-gray-800 rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center px-3 py-2 cursor-pointer border border-white/5 text-xs font-medium text-gray-300 bg-gray-800 rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
               >
                 <SendIcon className="w-3.5 h-3.5 mr-1.5" />
                 Send

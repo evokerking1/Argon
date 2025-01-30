@@ -80,8 +80,11 @@ async function updateServerState(serverId: string, state: string) {
 
 async function checkServerAccess(req: any, serverId: string) {
   const server = await db.servers.findUnique(
-    { id: serverId },  // First argument is just the where clause
-    { node: true, allocation: true }  // Second argument is the include object
+    { id: serverId },
+    { 
+      node: true, 
+      allocation: true  // Include allocation info
+    }
   );
 
   if (!server) {
@@ -95,6 +98,12 @@ async function checkServerAccess(req: any, serverId: string) {
     throw new Error('Access denied');
   }
 
+  // Get allocation details if exists
+  let allocationDetails = null;
+  if (server.allocationId) {
+    allocationDetails = await db.allocations.findUnique({ id: server.allocationId });
+  }
+
   // Fetch current status from daemon
   try {
     const status = await makeDaemonRequest(
@@ -103,9 +112,17 @@ async function checkServerAccess(req: any, serverId: string) {
       `/api/v1/servers/${server.internalId}`
     );
     await updateServerState(server.id, status.state);
-    return { ...server, status };
+    return { 
+      ...server, 
+      status,
+      allocation: allocationDetails  // Add allocation details to response
+    };
   } catch (error) {
-    return { ...server, status: { state: 'unknown' } };
+    return { 
+      ...server, 
+      status: { state: 'unknown' },
+      allocation: allocationDetails  // Add allocation details to response
+    };
   }
 }
 
