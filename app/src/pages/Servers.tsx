@@ -13,6 +13,7 @@ interface Node {
 
 interface ServerStatus {
   state: string;
+  status: any;
 }
 
 interface Server {
@@ -61,8 +62,8 @@ export default function Home() {
 
   const stats = {
     total: servers.length,
-    online: servers.filter(s => s.status?.state === 'running').length,
-    offline: servers.filter(s => s.status?.state !== 'running').length
+    online: servers.filter(s => s.status?.status?.state === 'running').length,
+    offline: servers.filter(s => s.status?.status?.state !== 'running').length
   };
 
   if (loading) {
@@ -135,7 +136,7 @@ export default function Home() {
                   <div className="flex items-center space-x-3">
                     <div className="flex-shrink-0">
                       <div className={`h-1.5 w-1.5 rounded-full ${
-                        server.status?.state === 'running' ? 'bg-green-400' : 'bg-gray-300'
+                        server.status?.status?.state === 'running' ? 'bg-green-400' : 'bg-gray-300'
                       }`}></div>
                     </div>
                     <div className="min-w-0">

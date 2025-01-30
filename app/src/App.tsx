@@ -49,7 +49,9 @@ function App() {
   return (
     <AuthProvider>
       <div className="bg-gray-50">
+        {shouldHaveSidebar &&
         <Navbar />
+        }
         <div className={`
           ${shouldHaveSidebar ? 'pl-56' : ''} 
           min-h-screen transition-all duration-200 ease-in-out

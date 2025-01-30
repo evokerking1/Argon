@@ -111,7 +111,7 @@ const AnsiParser: React.FC<AnsiParserProps> = ({ text }) => {
     return (
         <div className="font-mono leading-5 whitespace-pre-wrap">
             {spans.map((span, index) => (
-                <span key={index} style={{ ...span.style, fontFamily: 'Geist Mono' }}>
+                <span key={index} style={{ ...span.style, fontFamily: 'Coinbase Mono' }}>
                     {span.text}
                 </span>
             ))}

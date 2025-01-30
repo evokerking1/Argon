@@ -337,10 +337,13 @@ router.post('/', checkPermission(Permissions.ADMIN_SERVERS_CREATE), async (req: 
 
 router.delete('/:id', checkPermission(Permissions.ADMIN_SERVERS_DELETE), async (req: any, res) => {
   try {
-    const server = await db.servers.findUnique(
-      { id: req.params.id },
-      { include: { node: true, allocation: true } }
-    );
+    const server = await db.servers.findUnique({
+      where: { id: req.params.id },
+      include: { 
+        node: true, 
+        allocation: true 
+      }
+    });
 
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });

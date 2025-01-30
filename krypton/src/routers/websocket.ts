@@ -24,6 +24,7 @@ interface ConsoleSession {
   authenticated: boolean;
   logStream: any;
   stdin?: Duplex;
+  lastLogIndex: number;
 }
 
 interface ValidateResponse {
@@ -101,9 +102,11 @@ export class WebSocketManager {
       this.logBuffers.set(internalId, []);
     }
     const buffer = this.logBuffers.get(internalId)!;
-    buffer.push(log);
-    if (buffer.length > this.MAX_LOGS) {
-      buffer.shift();
+    if (!buffer.includes(log)) { // Ensure the log is not already in the buffer
+      buffer.push(log);
+      if (buffer.length > this.MAX_LOGS) {
+        buffer.shift();
+      }
     }
   }
 
@@ -121,6 +124,20 @@ export class WebSocketManager {
         } catch (error) {
           console.error('Failed to broadcast log:', error);
         }
+      }
+    }
+  }
+
+  // Throttle logs to prevent mass log spamming
+  private throttledBroadcastToServer = this.throttle(this.broadcastToServer, 1000);
+
+  private throttle(func: Function, limit: number) {
+    let inThrottle: boolean;
+    return function(this: any, ...args: any[]) {
+      if (!inThrottle) {
+        func.apply(this, args);
+        inThrottle = true;
+        setTimeout(() => inThrottle = false, limit);
       }
     }
   }
@@ -147,90 +164,11 @@ export class WebSocketManager {
       : 0;
   }
 
-  private async attachLogs(session: ConsoleSession) {
-    try {
-      if (session.logStream) {
-        session.logStream.destroy();
-      }
-  
-      session.logStream = await session.container.logs({
-        follow: true,
-        stdout: true,
-        stderr: true,
-        tail: 0
-      });
-  
-      // Buffer to hold incomplete lines
-      let buffer = '';
-      const decoder = new TextDecoder('utf-8');
-  
-      session.logStream.on('data', (chunk: Buffer) => {
-        try {
-          // Extract the actual log content from the Docker log format
-          // Docker log format: 8-byte header followed by log content
-          const header = chunk.slice(0, 8);
-          const content = chunk.slice(8);
-          
-          // Decode the content to string
-          const data = decoder.decode(content);
-          
-          // Add to buffer and process
-          buffer += data;
-          
-          // Split on both \n and \r\n to handle different line endings
-          const lines = buffer.split(/\r?\n/);
-          
-          // Keep the last potentially incomplete line in buffer
-          buffer = lines.pop() || '';
-  
-          // Process complete lines
-          for (const line of lines) {
-            if (line.trim()) {
-              // Clean up the line
-              const cleaned = line
-                .replace('pterodactyl', 'argon') // Because we support Pterodactyl eggs... and they make it very clear it's Pterodactyl 
-  
-              if (cleaned) {
-                // Split long lines into chunks if needed (optional)
-                const MAX_LINE_LENGTH = 2000;
-                if (cleaned.length > MAX_LINE_LENGTH) {
-                  for (let i = 0; i < cleaned.length; i += MAX_LINE_LENGTH) {
-                    const chunk = cleaned.slice(i, i + MAX_LINE_LENGTH);
-                    session.socket.send(JSON.stringify({
-                      event: 'console_output',
-                      data: { message: chunk }
-                    }));
-                  }
-                } else {
-                  session.socket.send(JSON.stringify({
-                    event: 'console_output',
-                    data: { message: cleaned }
-                  }));
-                }
-              }
-            }
-          }
-        } catch (error) {
-          console.error('[Logs] Error processing output:', error);
-        }
-      });
-  
-      session.logStream.on('error', (error) => {
-        console.error('[Logs] Stream error:', error);
-        // Attempt to reattach logs on error
-        setTimeout(() => this.attachLogs(session), 5000);
-      });
-  
-    } catch (error) {
-      console.error('[Logs] Setup error:', error);
-      // Attempt to reattach logs on error
-      setTimeout(() => this.attachLogs(session), 5000);
-    }
-  }
-
   private async handleSendCommand(session: ConsoleSession, command: string) {
     try {
-      console.log('[Command Handler] Starting command execution:', command);
+      // Sanitize the command to prevent command injection
+      const sanitizedCommand = command.replace(/[^a-zA-Z0-9\s]/g, '');
+      console.log('[Command Handler] Starting command execution:', sanitizedCommand);
       
       const { spawn } = require('child_process');
       
@@ -242,9 +180,9 @@ export class WebSocketManager {
         stdio: ['pipe', 'inherit', 'inherit']
       });
   
-      // Send the command
-      dockerAttach.stdin.write(command + '\n');
-      console.log('[Command Handler] Command sent:', command);
+      // Send the sanitized command
+      dockerAttach.stdin.write(sanitizedCommand + '\n');
+      console.log('[Command Handler] Command sent:', sanitizedCommand);
       
       // Brief delay then end stdin (might detach cleanly)
       setTimeout(() => {
@@ -296,6 +234,10 @@ export class WebSocketManager {
     session.socket.on('close', () => clearInterval(interval));
   }
 
+  private getLogsForSession(internalId: string): string[] {
+    return this.logBuffers.get(internalId) || [];
+  }
+
   private async setupContainerSession(socket: WebSocket, internalId: string, validation: ValidateResponse) {
     try {
       console.log(`[WebSocket] Setting up session for server ${internalId}`);
@@ -320,15 +262,41 @@ export class WebSocketManager {
         userId: validation.server.id,
         container,
         authenticated: true,
-        logStream: null
+        logStream: null,
+        lastLogIndex: 0 // Initialize the lastLogIndex
       };
       
       this.sessions.set(socket, session);
   
+      const logs = this.getLogsForSession(internalId);
+  
+      // Send historical logs as console_output events
+      logs.forEach(log => {
+        socket.send(JSON.stringify({
+          event: 'console_output',
+          data: { message: log }
+        }));
+      });
+
+      // Send stats immediately on auth success
+      const stats = await session.container.stats({ stream: false }) as ContainerStatsResponse;
+      socket.send(JSON.stringify({
+        event: 'stats',
+        data: {
+          state: containerInfo.State.Status,
+          cpu_percent: this.calculateCPUPercent(stats),
+          memory: {
+            used: stats.memory_stats.usage,
+            limit: stats.memory_stats.limit,
+            percent: (stats.memory_stats.usage / stats.memory_stats.limit) * 100
+          },
+          network: stats.networks?.eth0 ?? { rx_bytes: 0, tx_bytes: 0 }
+        }
+      }));
+  
       socket.send(JSON.stringify({
         event: 'auth_success',
         data: {
-          logs: [],
           state: containerInfo.State.Status
         }
       }));
@@ -343,6 +311,79 @@ export class WebSocketManager {
       console.error('[WebSocket] Failed to set up session:', error);
       socket.close(1011, 'Failed to initialize session');
       return null;
+    }
+  }
+  
+  private async attachLogs(session: ConsoleSession) {
+    try {
+      if (session.logStream) {
+        session.logStream.destroy();
+      }
+  
+      session.logStream = await session.container.logs({
+        follow: true,
+        stdout: true,
+        stderr: true,
+        tail: 0
+      });
+  
+      // Buffer to hold incomplete lines
+      let buffer = '';
+      const decoder = new TextDecoder('utf-8');
+  
+      session.logStream.on('data', (chunk: Buffer) => {
+        try {
+          // Extract the actual log content from the Docker log format
+          // Docker log format: 8-byte header followed by log content
+          const header = chunk.slice(0, 8);
+          const content = chunk.slice(8);
+          
+          // Decode the content to string
+          const data = decoder.decode(content);
+          
+          // Add to buffer and process
+          buffer += data;
+          
+          // Split on both \n and \r\n to handle different line endings
+          const lines = buffer.split(/\r?\n/);
+          
+          // Keep the last potentially incomplete line in buffer
+          buffer = lines.pop() || '';
+  
+          // Process complete lines
+          for (const line of lines) {
+            if (line.trim()) {
+              // Clean up the line
+              const cleaned = line
+                .replace('pterodactyl', 'argon') // Because we support Pterodactyl eggs... and they make it very clear it's Pterodactyl 
+  
+              if (cleaned) {
+                // Add the cleaned log to the buffer
+                this.addLogToBuffer(session.internalId, cleaned);
+  
+                // Send the log to the client
+                session.socket.send(JSON.stringify({
+                  event: 'console_output',
+                  data: { message: cleaned }
+                }));
+              }
+            }
+          }
+        } catch (error) {
+          console.error('[Logs] Error processing output:', error);
+        }
+      });
+  
+      session.logStream.on('error', (error) => {
+        console.error('[Logs] Stream error:', error);
+        // Attempt to reattach logs on error
+        setTimeout(() => this.attachLogs(session), 5000);
+      });
+  
+    } catch (error) {
+      console.error('[Logs] Setup error:', error);
+      // Attempt to reattach logs on error
+      setTimeout(() => this.attachLogs(session), 5000);
     }
   }
 
@@ -365,6 +406,9 @@ export class WebSocketManager {
           await this.attachLogs(session);
           break;
       }
+
+      // Clear log buffers on power state changes
+      this.logBuffers.delete(session.internalId);
 
       const containerInfo = await session.container.inspect();
       const state = containerInfo.State.Status;

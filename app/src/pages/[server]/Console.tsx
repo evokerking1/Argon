@@ -142,28 +142,29 @@ const ServerConsolePage = () => {
       setError('Authentication token not found');
       return;
     }
-
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      return;
+  
+    // Close any existing WebSocket connection before creating a new one
+    if (wsRef.current) {
+      wsRef.current.close();
     }
-
+  
     const wsUrl = `ws://${serverData.node.fqdn}:${serverData.node.port}?server=${serverData.internalId}&token=${token}`;
     
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
-
+  
     ws.onopen = () => {
       console.log('WebSocket connected');
       setConnected(true);
       setError(null);
     };
-
+  
     ws.onmessage = (event) => {
       const message: ConsoleMessage = JSON.parse(event.data);
       
       switch (message.event) {
         case 'console_output':
-          if (message.data.message) {
+          if (typeof message.data.message === 'string') {
             // @ts-ignore
             setMessages(prev => [...prev, message.data.message]);
           }
@@ -207,7 +208,7 @@ const ServerConsolePage = () => {
           break;
       }
     };
-
+  
     ws.onclose = () => {
       console.log('WebSocket disconnected');
       setConnected(false);
@@ -217,7 +218,7 @@ const ServerConsolePage = () => {
         }
       }, 5000);
     };
-
+  
     ws.onerror = (error) => {
       console.error('WebSocket error:', error);
       setError('Failed to connect to server console');
@@ -334,26 +335,23 @@ const ServerConsolePage = () => {
                 <button
                   onClick={() => handlePowerAction('start')}
                   disabled={powerLoading || isServerActive}
-                  className="flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-all duration-200"
+                  className="flex items-center px-4 py-4 cursor-pointer text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50 transition-all duration-200"
                 >
-                  <Play className="w-3.5 h-3.5 mr-1.5" />
-                  Start
-                </button>
-                <button
-                  onClick={() => handlePowerAction('stop')}
-                  disabled={powerLoading || !isServerActive}
-                  className="flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-all duration-200"
-                >
-                  <Square className="w-3.5 h-3.5 mr-1.5" />
-                  Stop
+                  <Play className="w-4 h-4 text-gray-700" />
                 </button>
                 <button
                   onClick={() => handlePowerAction('restart')}
                   disabled={powerLoading || !isServerActive}
-                  className="flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-all duration-200"
+                  className="flex items-center px-4 py-4 cursor-pointer text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50 transition-all duration-200"
                 >
-                  <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-                  Restart
+                  <RefreshCw className="w-4 h-4 text-gray-700" />
+                </button>
+                <button
+                  onClick={() => handlePowerAction('stop')}
+                  disabled={powerLoading || !isServerActive}
+                  className="flex items-center px-4 py-4 cursor-pointer text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50 transition-all duration-200"
+                >
+                  <Square className="w-4 h-4 text-gray-700" />
                 </button>
               </div>
             </div>
@@ -363,16 +361,12 @@ const ServerConsolePage = () => {
           <div className="flex items-center space-x-6 text-sm">
             <div className="flex items-center text-gray-500">
               <Hash className="w-4 h-4 mr-1.5" />
-              <span>{server?.internalId}</span>
+              <span>{server?.internalId.split('-', 1)}</span>
             </div>
             <div className="flex items-center text-gray-500">
               <Globe className="w-4 h-4 mr-1.5" />
               {/* @ts-ignore */}
               <span>{server?.allocation.alias ? server?.allocation.alias : server?.allocation.bindAddress}:{allocation?.port}</span>
-            </div>
-            <div className="flex items-center text-gray-500">
-              <Clock className="w-4 h-4 mr-1.5" />
-              <span>Created {new Date(server?.createdAt || '').toLocaleDateString()}</span>
             </div>
             <div className={`flex items-center ${getStateColor(server?.state || '')}`}>
               <div className={`w-2 h-2 rounded-full mr-2 ${
@@ -442,7 +436,7 @@ const ServerConsolePage = () => {
           <div 
             ref={consoleRef}
             style={{
-              fontFamily: 'Geist Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+              fontFamily: 'Coinbase Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
             }}
             className="h-[400px] p-4 overflow-y-auto text-xs text-gray-300 relative"
           >
@@ -465,17 +459,17 @@ const ServerConsolePage = () => {
     type="text"
     value={command}
     onChange={(e) => setCommand(e.target.value)}
-    placeholder="Enter a command..."
-    className="flex-1 bg-gray-800 text-gray-100 text-xs rounded-md px-3 py-2 focus:outline-none focus:ring-1 focus:ring-gray-700 placeholder:text-gray-500"
+    placeholder="$ server~"
+    className="flex-1 bg-gray-800 text-gray-100 rounded-md text-sm transition px-3 py-2 focus:outline-none focus:ring-1 focus:ring-transparent placeholder:text-gray-500"
   />
   <div className="flex items-center space-x-2">
-    <span className="text-xs text-gray-500">
+    <span className="text-xs hidden text-gray-500">
       {checkWebSocketStatus()}
     </span>
     <button
       type="submit"
       disabled={!connected || !isServerActive}
-      className="flex items-center px-3 py-2 cursor-pointer border border-white/5 text-xs font-medium text-gray-300 bg-gray-800 rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+      className="flex items-center px-3 py-2 cursor-pointer border border-white/5 transition text-xs font-medium text-gray-300 bg-gray-800 rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
     >
       <SendIcon className="w-3.5 h-3.5 mr-1.5" />
       Send

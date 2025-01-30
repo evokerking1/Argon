@@ -5,6 +5,8 @@ import {
   Cog6ToothIcon as CogOutline,
   UserCircleIcon,
   ArrowLeftOnRectangleIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
 } from '@heroicons/react/24/outline';
 import { 
   ServerIcon as ServerSolid,
@@ -26,6 +28,7 @@ export default function Sidebar() {
   const location = useLocation();
   const { user, logout } = useAuth();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isServerCategoryOpen, setIsServerCategoryOpen] = useState(true);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLDivElement>(null);
   
@@ -55,14 +58,23 @@ export default function Sidebar() {
     setIsDropdownOpen(false);
   };
 
+  const toggleServerCategory = () => {
+    setIsServerCategoryOpen(!isServerCategoryOpen);
+  };
+
+  const isServerPage = location.pathname.startsWith('/servers/') && location.pathname.split('/').length > 3;
+
   return (
     <>
       <div 
         className={`fixed inset-y-0 left-0 w-56 bg-gradient-to-b from-gray-100/50 to-gray-100 border-r border-gray-200 z-30 transform transition-transform duration-300 ease-in-out`}
       >
         {/* Logo section */}
-        <div className="h-14 flex items-center justify-between px-4 border-b border-gray-200">
-          <span className="text-sm font-medium text-gray-700">Argon</span>
+        <div className="h-14 flex items-center justify-center px-4 border-b border-gray-200">
+          <span className="text-sm font-semibold text-gray-700">
+            {/* We would have text here. But let's put the Argon logo for now */}
+            <img src="https://i.imgur.com/GpRi4xT.png" alt="Argon Logo" className="h-5" />
+          </span>
         </div>
 
         {/* Navigation */}
@@ -78,7 +90,7 @@ export default function Sidebar() {
             {location.pathname === '/servers' ? (
               <ServerSolid className="mr-2 h-3.5 w-3.5 text-gray-500" />
             ) : (
-              <ServerOutline className="mr-2 h-3.5 w-3.5 text-gray-400 group-hover:text-gray-500 stroke-[1.5]" />
+              <ServerOutline className="mr-2 h-3.5 w-3.5 text-gray-400 transition group-hover:text-gray-500 stroke-[1.5]" />
             )}
             Servers
           </Link>
@@ -94,10 +106,49 @@ export default function Sidebar() {
             {location.pathname === '/admin' ? (
               <CogSolid className="mr-2 h-3.5 w-3.5 text-gray-500" />
             ) : (
-              <CogOutline className="mr-2 h-3.5 w-3.5 text-gray-400 group-hover:text-gray-500 stroke-[1.5]" />
+              <CogOutline className="mr-2 h-3.5 w-3.5 text-gray-400 transition group-hover:text-gray-500 stroke-[1.5]" />
             )}
             Admin
           </Link>
+
+          {isServerPage && (
+            <div>
+              <div className="border-t mb-2 mt-4 border-gray-200" />
+              <button
+                onClick={toggleServerCategory}
+                className="group flex items-center h-[32px] px-2 text-[10px] uppercase tracking-widest font-medium rounded-md transition-colors duration-200 ease-in-out border shadow-xs text-gray-600 hover:text-gray-700 hover:bg-gray-100 border-transparent shadow-transparent"
+              >
+                {isServerCategoryOpen ? (
+                  <ChevronDownIcon className="mr-2 h-3.5 w-3.5 text-gray-400 transition group-hover:text-gray-500" />
+                ) : (
+                  <ChevronRightIcon className="mr-2 h-3.5 w-3.5 text-gray-400 transition group-hover:text-gray-500" />
+                )}
+                Server
+              </button>
+              <div className={`pl-4 border-l-1 border-gray-200 transition-all duration-300 ease-in-out ${isServerCategoryOpen ? 'max-h-screen' : 'max-h-0 overflow-hidden'}`}>
+                <Link
+                  to={`${location.pathname.replace(/\/(console|files)$/, '')}/console`}
+                  className={`group flex items-center h-[32px] px-2 text-xs font-medium rounded-md transition-colors duration-200 ease-in-out border shadow-xs ${
+                    location.pathname.endsWith('/console')
+                      ? 'bg-white text-gray-700 border-gray-200'
+                      : 'text-gray-600 hover:text-gray-700 hover:bg-gray-100 border-transparent shadow-transparent'
+                  }`}
+                >
+                  Console
+                </Link>
+                <Link
+                  to={`${location.pathname.replace(/\/(console|files)$/, '')}/files`}
+                  className={`group flex items-center h-[32px] px-2 text-xs font-medium rounded-md transition-colors duration-200 ease-in-out border shadow-xs ${
+                    location.pathname.endsWith('/files')
+                      ? 'bg-white text-gray-700 border-gray-200'
+                      : 'text-gray-600 hover:text-gray-700 hover:bg-gray-100 border-transparent shadow-transparent'
+                  }`}
+                >
+                  Files
+                </Link>
+              </div>
+            </div>
+          )}
         </nav>
 
         {/* User section with dropdown */}

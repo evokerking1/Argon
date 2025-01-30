@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ServerIcon, HardDriveIcon, BoxIcon } from 'lucide-react';
+import { ServerIcon, HardDriveIcon, BoxIcon, HelpCircleIcon, GithubIcon, BookOpenIcon, HeartIcon } from 'lucide-react';
 import AdminBar from '../components/AdminBar';
 
 const AdminPage = () => {
@@ -10,6 +10,7 @@ const AdminPage = () => {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -41,6 +42,7 @@ const AdminPage = () => {
             offline: new Set(servers.filter((s: any) => !s.node?.isOnline).map((s: any) => s.node?.id)).size
           }
         });
+        setVersion('1.0.0');
       } catch (err) {
         setError(err instanceof Error ? err.message : 'An error occurred');
       } finally {
@@ -107,10 +109,15 @@ const AdminPage = () => {
       <div className="p-6">
         <div className="space-y-6">
           <div>
-            <h1 className="text-lg font-semibold text-gray-900">Admin Overview</h1>
+            <h1 className="text-lg font-semibold text-gray-900">Admin</h1>
             <p className="text-xs text-gray-500 mt-1">
               Monitor and manage your Argon panel.
             </p>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-md shadow-xs p-6">
+            <h2 className="text-sm font-medium text-gray-900">System Information</h2>
+            <p className="text-xs text-gray-500 mt-1">You are running Argon version <code className="bg-gray-100 px-1 py-0.5 ml-0.5 mr-0.5 rounded font-mono">{version}</code>. Your panel is up-to-date!</p>
           </div>
 
           <div className="grid grid-cols-3 gap-4">
@@ -140,6 +147,25 @@ const AdminPage = () => {
                 </div>
               );
             })}
+          </div>
+
+          <div className="grid grid-cols-4 gap-4 mt-6">
+            <button className="bg-amber-50 shadow-xs border border-gray-200 font-medium text-sm text-amber-700 py-2 px-4 rounded-md flex items-center space-x-2">
+              <HelpCircleIcon className="w-4 h-4" />
+              <span>Get Help</span>
+            </button>
+            <button className="bg-blue-50 shadow-xs border border-gray-200 font-medium text-sm text-blue-700 py-2 px-4 rounded-md flex items-center space-x-2">
+              <GithubIcon className="w-4 h-4" />
+              <span>GitHub</span>
+            </button>
+            <button className="bg-blue-50 shadow-xs border border-gray-200 font-medium text-sm text-blue-700 py-2 px-4 rounded-md flex items-center space-x-2">
+              <BookOpenIcon className="w-4 h-4" />
+              <span>Documentation</span>
+            </button>
+            <button className="bg-green-50 shadow-xs border border-gray-200 font-medium text-sm text-green-700 py-2 px-4 rounded-md flex items-center space-x-2">
+              <HeartIcon className="w-4 h-4" />
+              <span>Support the Project</span>
+            </button>
           </div>
         </div>
       </div>
