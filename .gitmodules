@@ -1,0 +1,9 @@
+[submodule "argon-ui"]
+	path = argon-ui
+	url = https://github.com/ArgonFOSS/argon-ui.git
+[submodule "argon-core"]
+	path = argon-core
+	url = https://github.com/ArgonFOSS/argon-core.git
+[submodule "krypton"]
+	path = krypton
+	url = https://github.com/ArgonFOSS/krypton.git
