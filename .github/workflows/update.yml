@@ -10,7 +10,7 @@ on:
 
 jobs:
   - name: Load the repo into action
-        uses: actions/checkout@v4
+      uses: actions/checkout@v4
   - name: Update Argon-core module
       run: cd argon-core
            git pull
