@@ -1,0 +1,22 @@
+name: Submodules update
+run-name: Submodules update
+on:
+  push:
+
+  workflow_dispatch:
+
+  schedule:
+    - cron: "0 0 * * *"
+
+jobs:
+  - name: Load the repo into action
+        uses: actions/checkout@v4
+  - name: Update Argon-core module
+      run: cd argon-core
+           git pull
+  - name: Update Argon-ui module
+      run: cd argon-ui
+           git pull
+  - name: Update krypton daemon module
+      run: cd krypton
+           git pull

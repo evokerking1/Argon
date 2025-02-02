@@ -1,6 +1,9 @@
 # Argon master repository
 
+![Argon Labs / OSS Logo](https://i.imgur.com/vNovd0z.png)
+
 Argon is built of 3 different modules:
+
 - core: This is the API that is used by the frontend, it manages everything panel-side for Argon.
 - ui: This is what you see.
 - krypton: The Daemon that runs on your nodes, sort of like Pterodactyl Wings.
